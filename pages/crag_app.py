@@ -151,6 +151,7 @@ if st.session_state.messages:
     st.sidebar.markdown("<div style='height: 0.5rem;'></div>", unsafe_allow_html=True)
     if st.sidebar.button("🧹 Clear Chat History", type="secondary", use_container_width=True):
         st.session_state.messages = []
+        st.session_state.suggested_prompt = None
         st.toast("Conversation cleared.", icon="✨")
         st.rerun()
 
@@ -172,7 +173,7 @@ with header_col1:
         rc = st.session_state.rag_components
         st.markdown(
             f"""
-            <div style="display: flex; align-items: center; gap: 0.35rem; flex-wrap: wrap; margin-bottom: 0.75rem;">
+            <div style="display: flex; align-items: center; gap: 0.35rem; flex-wrap: wrap; margin-bottom: 0.5rem;">
                 <span class="source-pill">📄 <b>{rc['doc_name']}</b></span>
                 <span class="source-pill">📑 <b>{rc['pages_count']} Pages</b></span>
                 <span class="source-pill">🧩 <b>{len(rc['chunks'])} Vector Chunks</b></span>
@@ -182,7 +183,7 @@ with header_col1:
         )
     else:
         st.markdown(
-            "<p style='color: #94a3b8; font-size: 0.85rem; margin-bottom: 0.75rem;'>Upload a PDF in the sidebar to activate the semantic search and Q&A engine.</p>",
+            "<p style='color: #94a3b8; font-size: 0.85rem; margin-bottom: 0.5rem;'>Upload a PDF in the sidebar to activate the semantic search and Q&A engine.</p>",
             unsafe_allow_html=True
         )
 
@@ -202,6 +203,7 @@ with header_col2:
             mime="text/markdown",
             use_container_width=True
         )
+
 
 # --- Empty State ---
 if not st.session_state.rag_components:
@@ -233,22 +235,30 @@ if not st.session_state.rag_components:
         unsafe_allow_html=True
     )
 else:
-    # Quick Suggested Questions Chips
-    if not st.session_state.messages:
-        st.markdown("<p style='font-size: 0.8rem; font-weight: 600; color: #94a3b8; margin-bottom: 0.35rem;'>💡 Suggested Quick Questions:</p>", unsafe_allow_html=True)
-        q_col1, q_col2, q_col3, q_col4 = st.columns(4)
+    # Always-available Quick Suggested Question Chips
+    st.markdown(
+        "<div style='display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.35rem;'>"
+        "<span style='font-size: 0.78rem; font-weight: 600; color: #94a3b8;'>💡 Quick Question Prompts:</span>"
+        "</div>",
+        unsafe_allow_html=True
+    )
+    q_col1, q_col2, q_col3, q_col4 = st.columns(4)
 
-        if q_col1.button("📄 Summary", use_container_width=True):
-            st.session_state.suggested_prompt = "Provide a comprehensive summary of this document, highlighting its core objectives and findings."
-        if q_col2.button("🎯 Key Takeaways", use_container_width=True):
-            st.session_state.suggested_prompt = "What are the most critical takeaways and conclusions presented in this document?"
-        if q_col3.button("⚠️ Limitations", use_container_width=True):
-            st.session_state.suggested_prompt = "What challenges, risks, limitations, or caveats are highlighted in this text?"
-        if q_col4.button("📋 Action Items", use_container_width=True):
-            st.session_state.suggested_prompt = "Extract all recommended action items and practical implications from the document."
+    if q_col1.button("📄 Summary", key="btn_summary", use_container_width=True):
+        st.session_state.suggested_prompt = "Provide a comprehensive summary of this document, highlighting its core objectives and findings."
+        st.rerun()
+    if q_col2.button("🎯 Key Takeaways", key="btn_takeaways", use_container_width=True):
+        st.session_state.suggested_prompt = "What are the most critical takeaways and conclusions presented in this document?"
+        st.rerun()
+    if q_col3.button("⚠️ Limitations", key="btn_limitations", use_container_width=True):
+        st.session_state.suggested_prompt = "What challenges, risks, limitations, or caveats are highlighted in this text?"
+        st.rerun()
+    if q_col4.button("📋 Action Items", key="btn_actions", use_container_width=True):
+        st.session_state.suggested_prompt = "Extract all recommended action items and practical implications from the document."
+        st.rerun()
 
 
-# --- Display Chat Messages ---
+# --- Display Existing Chat History ---
 for msg_idx, msg in enumerate(st.session_state.messages):
     with st.chat_message(msg["role"]):
         st.markdown(msg["content"])
@@ -261,7 +271,6 @@ for msg_idx, msg in enumerate(st.session_state.messages):
             generation_sec = msg.get("generation_sec", 0)
             orig_query = msg.get("user_query", "")
             
-            # Confidence styling
             if conf_level == "HIGH":
                 meter_color = "#10b981"
                 conf_text = f"🟢 High Confidence ({max_score:.0%})"
@@ -272,7 +281,6 @@ for msg_idx, msg in enumerate(st.session_state.messages):
                 meter_color = "#ef4444"
                 conf_text = f"🔴 Low Relevance ({max_score:.0%})"
 
-            # Execution telemetry badge row
             metrics_html = f"""
             <div style="display: flex; gap: 0.6rem; align-items: center; font-size: 0.72rem; color: #64748b; margin-top: 0.4rem; margin-bottom: 0.4rem; flex-wrap: wrap;">
                 <span>⚡ <b>{retrieval_ms:.0f}ms</b> vector search</span>
@@ -290,7 +298,6 @@ for msg_idx, msg in enumerate(st.session_state.messages):
                 for idx, chunk in enumerate(rd.get("chunks", [])):
                     page_badge = f"Page {chunk.get('page', '?')}"
                     sim_pct = f"{chunk.get('score', 0):.1%}"
-                    # Highlight matched keywords in chunk text
                     chunk_text = chunk.get("text", "")
                     highlighted = rb.highlight_keywords(chunk_text, orig_query)
 
@@ -310,30 +317,35 @@ for msg_idx, msg in enumerate(st.session_state.messages):
                     )
 
 
-# --- Handle Input ---
-prompt = st.chat_input("Ask any question regarding the active document...")
+# --- Capture User Prompt (from chat_input or suggested button) ---
+chat_input_val = st.chat_input("Ask any question regarding the active document...")
 
+active_prompt = None
 if st.session_state.suggested_prompt:
-    prompt = st.session_state.suggested_prompt
+    active_prompt = st.session_state.suggested_prompt
     st.session_state.suggested_prompt = None
+elif chat_input_val:
+    active_prompt = chat_input_val
 
-if prompt:
+# --- Execute Question Query ---
+if active_prompt:
     if st.session_state.rag_components is None:
         st.warning("Please upload and index a PDF first using the sidebar.")
         st.stop()
 
-    st.session_state.messages.append({"role": "user", "content": prompt})
+    # Append user question
+    st.session_state.messages.append({"role": "user", "content": active_prompt})
     with st.chat_message("user"):
-        st.markdown(prompt)
+        st.markdown(active_prompt)
 
     with st.chat_message("assistant"):
         rag_data = st.session_state.rag_components
         
-        # Measure vector search latency
+        # Measure retrieval duration
         t_start_retrieval = time.perf_counter()
         with st.spinner("Retrieving and evaluating relevance..."):
             retrieval_data = rb.retrieve_chunks_with_crag(
-                question=prompt,
+                question=active_prompt,
                 chunks=rag_data["chunks"],
                 index=rag_data["index"],
                 model=rag_data["model"],
@@ -342,10 +354,10 @@ if prompt:
             )
         retrieval_ms = (time.perf_counter() - t_start_retrieval) * 1000.0
 
-        # Measure generation duration
+        # Stream answer
         t_start_gen = time.perf_counter()
         response_stream = rb.generate_crag_answer_stream(
-            question=prompt,
+            question=active_prompt,
             retrieval_data=retrieval_data,
             temperature=st.session_state.temperature,
             chat_history=st.session_state.messages[:-1]
@@ -386,7 +398,7 @@ if prompt:
                 page_badge = f"Page {chunk.get('page', '?')}"
                 sim_pct = f"{chunk.get('score', 0):.1%}"
                 chunk_text = chunk.get("text", "")
-                highlighted = rb.highlight_keywords(chunk_text, prompt)
+                highlighted = rb.highlight_keywords(chunk_text, active_prompt)
 
                 st.markdown(
                     f"""
@@ -403,19 +415,21 @@ if prompt:
                     unsafe_allow_html=True
                 )
 
+    # Store message in session state
     st.session_state.messages.append({
         "role": "assistant",
         "content": full_response,
         "retrieval_data": retrieval_data,
         "retrieval_ms": retrieval_ms,
         "generation_sec": generation_sec,
-        "user_query": prompt
+        "user_query": active_prompt
     })
 
+    # Save to history for Analytics
     st.session_state.history.append({
         "Timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
         "Document": rag_data.get("doc_name", "Document"),
-        "Query": prompt,
+        "Query": active_prompt,
         "Answer": full_response,
         "Model": rb.GROQ_MODEL,
         "Confidence": retrieval_data.get("confidence_level", "HIGH"),
@@ -423,3 +437,6 @@ if prompt:
         "Chunks_Used": len(retrieval_data.get("chunks", [])),
         "Latency_ms": f"{retrieval_ms:.0f}ms"
     })
+
+    # Smoothly rerun to display the newly added message and keep chips active
+    st.rerun()
