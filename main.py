@@ -1,212 +1,361 @@
-import os
-import streamlit as st
-import pyrebase  # Added for Firebase
-import json      # Added to parse Firebase errors
-from dotenv import load_dotenv
-load_dotenv(dotenv_path="./.env")
-# --- Firebase Configuration (USER MUST FILL THIS) ---
-# 1. Go to your Firebase project settings
-# 2. Go to "Project settings" > "General"
-# 3. Scroll down to "Your apps" and select or create a Web app (</>).
-# 4. Find the `firebaseConfig` object and copy/paste its contents here.
-# 5. IMPORTANT: In Firebase Console > Authentication > Sign-in method, ENABLE "Email/Password"
-#
-# 6. !! PYTHON SYNTAX WARNING !!
-#    When you paste your config from Firebase, it might include a line with
-#    a JavaScript comment (like `// ...` for `measurementId`).
-#    Python does NOT allow `//` comments. You MUST change `//` to `#`
-#    or delete that comment line entirely.
-#
-#    BAD (causes SyntaxError):
-#    "measurementId": "G-..." // For Firebase JS SDK v7.20.0...
-#
-#    GOOD (Python-safe):
-#    "measurementId": "G-..." # For Firebase JS SDK v7.20.0...
-#
-firebase_config = {
-  "apiKey": os.getenv("FIREBASE_API_KEY"),
-  "authDomain": os.getenv("FIREBASE_AUTH_DOMAIN"),
-  "projectId": os.getenv("PROJECT_ID"),
-  "messagingSenderId": os.getenv("MESSAGING_SENDER_ID"),
-  "storageBucket": os.getenv("STORAGE_BUCKET"),
-  "appId": os.getenv("APP_ID"),
-  "measurementId": os.getenv("MEASUREMENT_ID"), # For Firebase JS SDK v7.20.0 and later, measurementId is optional
+"""
+CRAG - Corrective Retrieval-Augmented Generation
+Main Application Entrypoint & Authentication Portal
+"""
 
-  # --- FIX ADDED HERE ---
-  # Pyrebase requires the databaseURL, even if only using Auth.
-  # This is typically your projectID + "-default-rtdb.firebaseio.com"
-  "databaseURL": os.getenv("DATABASE_URL")
+import os
+import json
+import streamlit as st
+import pyrebase
+from dotenv import load_dotenv
+
+import ui_styles
+import rag_backend as rb
+
+# Load environment configuration
+load_dotenv(dotenv_path="./.env")
+
+# --- Streamlit Page Configuration ---
+st.set_page_config(
+    page_title="CRAG AI | Home",
+    page_icon="⚡",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
+
+# Apply unified compact 1.0 viewpoint design system
+ui_styles.apply_theme()
+
+# --- Firebase Configuration ---
+firebase_config = {
+    "apiKey": os.getenv("FIREBASE_API_KEY"),
+    "authDomain": os.getenv("FIREBASE_AUTH_DOMAIN"),
+    "projectId": os.getenv("PROJECT_ID"),
+    "messagingSenderId": os.getenv("MESSAGING_SENDER_ID"),
+    "storageBucket": os.getenv("STORAGE_BUCKET"),
+    "appId": os.getenv("APP_ID"),
+    "measurementId": os.getenv("MEASUREMENT_ID"),
+    "databaseURL": os.getenv("DATABASE_URL")
 }
 
-# --- Initialize Firebase ---
-@st.cache_resource
+
+@st.cache_resource(show_spinner=False)
 def init_firebase():
     """Initializes and returns the Firebase Auth object."""
     try:
-        # Check if all required config keys are filled
-        if not all(firebase_config.get(key) not in [None, "", "YOUR_API_KEY"] for key in ["apiKey", "authDomain", "projectId"]):
-            st.error("Firebase configuration is incomplete. Please fill in `firebase_config` in main.py.")
+        required_keys = ["apiKey", "authDomain", "projectId"]
+        if not all(firebase_config.get(k) and firebase_config.get(k) != "your-firebase-api-key" for k in required_keys):
             return None
         firebase = pyrebase.initialize_app(firebase_config)
         return firebase.auth()
     except Exception as e:
-        # This can happen if config is malformed
-        st.error(f"Failed to initialize Firebase: {e}")
         return None
+
 
 auth = init_firebase()
 
-# --- Page Configuration ---
-st.set_page_config(
-    page_title="CRAG Home",
-    page_icon="🏠",
-    layout="centered"
-)
-
-# --- Background Color and Styling ---
-def set_styles():
-    st.markdown(f"""
-    <style>
-    /* Main app background: CHANGED TO SOLID BLACK */
-    .stApp {{
-        background-color: black; 
-    }}
-    
-    /* Content blocks (login, text, etc.) */
-    [data-testid="stVerticalBlockBorderWrapper"] {{
-        background-color: rgb(50, 100, 200);
-        border-radius: 20px;
-        padding: 2rem;
-        box-shadow: 0 8px 32px 0 rgba(31, 38, 135, 0.37);
-        border: 1px solid rgb(0, 51, 102);
-    }}
-    
-    /* Big 'CRAG' Title */
-    .crag-title {{
-        font-size: 8rem;
-        font-weight: 900;
-        text-align: center;
-        color: #f0f0f0;
-    }}
-    
-    /* Subtitle */
-    .crag-subtitle {{
-        font-size: 1.5rem;
-        font-weight: 300;
-        text-align: center;
-        color: #ddd;
-    }}
-    
-    body, p, h1, h2, h3, h4, .st-bh {{
-        color: #f0f0f0; /* Light gray for contrast on black */
-    }}
-    </style>
-    """, unsafe_allow_html=True)
-
-set_styles()
-
-# --- Initialize Session State ---
+# --- Session State Initialization ---
 if "authenticated" not in st.session_state:
     st.session_state.authenticated = False
 if "user" not in st.session_state:
-    st.session_state.user = None  # To store user info
+    st.session_state.user = None
+if "messages" not in st.session_state:
+    st.session_state.messages = []
+if "rag_components" not in st.session_state:
+    st.session_state.rag_components = None
+if "history" not in st.session_state:
+    st.session_state.history = []
 
-# --- Login Logic (REPLACED with Firebase) ---
-def login_form():
-    """Displays the Firebase Login/Sign Up form."""
-    st.markdown("<h1 style='text-align: center;'>Login to CRAG</h1>", unsafe_allow_html=True)
-    
-    if auth is None:
-        st.warning("Firebase is not initialized. Please check your `firebase_config`.")
-        return
+# --- Sidebar Content ---
+ui_styles.render_sidebar_header()
 
-    # A toggle to switch between Login and Sign Up
-    action = st.radio("Choose action:", ("Login", "Sign Up"), horizontal=True, label_visibility="collapsed")
-
-    with st.form("firebase_auth_form"):
-        email = st.text_input("Email", placeholder="user@example.com")
-        password = st.text_input("Password", type="password", placeholder="********")
-        submitted = st.form_submit_button(action)
-
-        if submitted:
-            try:
-                if action == "Login":
-                    # Try to sign in the user
-                    user = auth.sign_in_with_email_and_password(email, password)
-                    st.session_state.authenticated = True
-                    st.session_state.user = user  # Store user details
-                    st.rerun()
-                
-                elif action == "Sign Up":
-                    # Try to create a new user
-                    user = auth.create_user_with_email_and_password(email, password)
-                    st.session_state.authenticated = True
-                    st.session_state.user = user  # Store user details
-                    st.success("Account created successfully! You are now logged in.")
-                    st.balloons()
-                    st.rerun()
-
-            except Exception as e:
-                # Firebase errors are often nested in a JSON string.
-                try:
-                    # Try to parse the specific Firebase error message
-                    error_data = e.args[1]
-                    error_json = json.loads(error_data)
-                    error_message = error_json.get('error', {}).get('message', '')
-                    
-                    if error_message in ["EMAIL_NOT_FOUND", "INVALID_PASSWORD", "INVALID_LOGIN_CREDENTIALS"]:
-                        st.error("Invalid email or password. Please try again.")
-                    elif error_message == "EMAIL_EXISTS":
-                        st.error("An account with this email already exists. Please switch to Login.")
-                    elif error_message == "WEAK_PASSWORD":
-                        st.error("Password is too weak. It must be at least 6 characters.")
-                    elif error_message == "OPERATION_NOT_ALLOWED":
-                        st.error("Email/Password sign-in is disabled in your Firebase console. Go to Firebase Console > Authentication > Sign-in method, and enable 'Email/Password'.")
-                    elif error_message == "TOO_MANY_ATTEMPTS_TRY_LATER":
-                        st.error("Too many failed attempts. Please try again later.")
-                    else:
-                        st.error(f"Firebase error: {error_message}")
-                except (IndexError, KeyError, json.JSONDecodeError, AttributeError):
-                    # Check for network/DNS connection errors
-                    err_str = str(e)
-                    if "getaddrinfo failed" in err_str or "11001" in err_str:
-                        st.error("🌐 **Network / DNS Error:** Unable to connect to Google Firebase (`www.googleapis.com`).\n\n"
-                                 "• Please check your internet connection.\n"
-                                 "• If you are using a VPN, proxy, or firewall, try temporarily disabling it.\n"
-                                 "• Try flushing DNS: Run `ipconfig /flushdns` in Command Prompt.\n"
-                                 "• Try switching your DNS to Google DNS (8.8.8.8) or Cloudflare (1.1.1.1).")
-                    elif "Max retries exceeded" in err_str:
-                        st.error("🌐 **Connection Timeout:** Could not reach Firebase servers. Please verify your internet connection.")
-                    else:
-                        st.error(f"An error occurred: {e}")
-
-# --- Main Page Content ---
-if not st.session_state.authenticated:
-    login_form()
-else:
-    # --- Home Page Content (when logged in) ---
-    st.markdown("<p class='crag-title'>CRAG</p>", unsafe_allow_html=True)
-    st.markdown("<p class='crag-subtitle'>Contextual Retrieval-Augmented Generation</p>", unsafe_allow_html=True)
-    
-    st.markdown("""
-    Welcome to your personal document analysis tool.
-    
-    This application allows you to 'chat' with your PDF documents using a powerful Retrieval-Augmented Generation (RAG) system.
-    
-    ### How to Use:
-    1.  **Go to the `2_CRAG_App` page** using the sidebar on the left.
-    2.  **Upload your PDF** in the sidebar.
-    3.  **Wait for it to be processed.** A success message will appear.
-4.  **Start chatting!** Ask any question about the document in the chat box.
-    5.  **Check the `3_History` page** to see all your questions and answers.
-    """)
-    
-    # Display the user's email if available
-    if st.session_state.user and 'email' in st.session_state.user:
-         st.sidebar.success(f"Logged in as: {st.session_state.user['email']}")
-
-    if st.button("Logout", type="primary"):
+if st.session_state.authenticated:
+    ui_styles.render_user_profile(st.session_state.user)
+    if st.session_state.rag_components:
+        ui_styles.render_status_card(
+            doc_name=st.session_state.rag_components.get("doc_name", "Document"),
+            chunk_count=len(st.session_state.rag_components.get("chunks", []))
+        )
+    if st.sidebar.button("🚪 Logout Session", type="secondary", use_container_width=True):
         st.session_state.authenticated = False
-        st.session_state.user = None  # Clear user info
+        st.session_state.user = None
+        st.session_state.rag_components = None
+        st.session_state.messages = []
         st.rerun()
+else:
+    st.sidebar.markdown(
+        """
+        <div style="background: rgba(15, 23, 42, 0.6); padding: 0.75rem; border-radius: 8px; border: 1px solid rgba(255,255,255,0.08);">
+            <div style="font-size: 0.75rem; font-weight: 700; color: #a5b4fc; margin-bottom: 0.25rem;">🔐 AUTHENTICATION REQUIRED</div>
+            <p style="font-size: 0.72rem; color: #94a3b8; margin: 0; line-height: 1.35;">
+                Sign in with your account or use <b>Guest Mode</b> to access the document Q&A engine.
+            </p>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
 
+# Sidebar System Health Status
+groq_ready = bool(os.getenv("GROQ_API_KEY"))
+st.sidebar.markdown(
+    f"""
+    <div style="margin-top: 1rem; padding-top: 0.75rem; border-top: 1px solid rgba(255,255,255,0.06); font-size: 0.72rem; color: #64748b;">
+        <div style="display: flex; justify-content: space-between; margin-bottom: 0.25rem;">
+            <span>Groq Engine:</span>
+            <span style="color: {'#10b981' if groq_ready else '#ef4444'}; font-weight: 600;">{'● Connected' if groq_ready else '○ Missing Key'}</span>
+        </div>
+        <div style="display: flex; justify-content: space-between; margin-bottom: 0.25rem;">
+            <span>Model:</span>
+            <span style="color: #a5b4fc; font-weight: 600;">{rb.GROQ_MODEL}</span>
+        </div>
+        <div style="display: flex; justify-content: space-between;">
+            <span>Vector Index:</span>
+            <span style="color: #10b981; font-weight: 600;">● FAISS IP</span>
+        </div>
+    </div>
+    """,
+    unsafe_allow_html=True
+)
+
+
+# --- Authentication Form ---
+def render_auth_portal():
+    """Renders a sleek, compact authentication card."""
+    col1, col2, col3 = st.columns([1, 1.8, 1])
+
+    with col2:
+        st.markdown(
+            """
+            <div class="crag-hero-container">
+                <div class="crag-hero-badge">
+                    <span class="crag-pulse-dot"></span>
+                    CORRECTIVE RAG PLATFORM
+                </div>
+                <div class="crag-gradient-title">CRAG AI</div>
+                <p class="crag-subtitle">
+                    Contextual & Self-Correcting Retrieval-Augmented Generation for PDF Documents.
+                </p>
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
+
+        with st.container(border=True):
+            action = st.radio(
+                "Mode",
+                ["Sign In", "Create Account"],
+                horizontal=True,
+                label_visibility="collapsed"
+            )
+
+            with st.form("auth_form", clear_on_submit=False):
+                email = st.text_input("Email", placeholder="user@example.com")
+                password = st.text_input("Password", type="password", placeholder="••••••••••••")
+                
+                submitted = st.form_submit_button(
+                    label="Sign In →" if action == "Sign In" else "Create Account →",
+                    type="primary",
+                    use_container_width=True
+                )
+
+                if submitted:
+                    if not email or not password:
+                        st.error("Please enter both email and password.")
+                    elif auth is None:
+                        st.warning("Firebase is in local mode. Please use Guest Access below or verify .env configuration.")
+                    else:
+                        try:
+                            with st.spinner("Authenticating..."):
+                                if action == "Sign In":
+                                    user = auth.sign_in_with_email_and_password(email, password)
+                                    st.session_state.authenticated = True
+                                    st.session_state.user = user
+                                    st.toast("Welcome back!", icon="🎉")
+                                    st.rerun()
+                                else:
+                                    user = auth.create_user_with_email_and_password(email, password)
+                                    st.session_state.authenticated = True
+                                    st.session_state.user = user
+                                    st.toast("Account created successfully!", icon="🚀")
+                                    st.rerun()
+                        except Exception as e:
+                            try:
+                                error_data = e.args[1]
+                                error_json = json.loads(error_data)
+                                msg = error_json.get("error", {}).get("message", "")
+                                if msg in ["EMAIL_NOT_FOUND", "INVALID_PASSWORD", "INVALID_LOGIN_CREDENTIALS"]:
+                                    st.error("Invalid email or password. Please try again.")
+                                elif msg == "EMAIL_EXISTS":
+                                    st.error("An account with this email already exists. Switch to Sign In.")
+                                elif msg == "WEAK_PASSWORD":
+                                    st.error("Password must be at least 6 characters.")
+                                else:
+                                    st.error(f"Error: {msg}")
+                            except Exception:
+                                st.error("Authentication failed. Please verify credentials or use Guest Mode.")
+
+            st.markdown(
+                """
+                <div style="display: flex; align-items: center; text-align: center; margin: 0.75rem 0;">
+                    <div style="flex-grow: 1; height: 1px; background: rgba(255,255,255,0.08);"></div>
+                    <span style="padding: 0 8px; color: #64748b; font-size: 0.7rem; text-transform: uppercase; font-weight: 600;">Or</span>
+                    <div style="flex-grow: 1; height: 1px; background: rgba(255,255,255,0.08);"></div>
+                </div>
+                """,
+                unsafe_allow_html=True
+            )
+
+            if st.button("🚀 Continue with Guest Access", type="secondary", use_container_width=True):
+                st.session_state.authenticated = True
+                st.session_state.user = {"email": "guest.user@crag.app"}
+                st.toast("Signed in as Guest User!", icon="⚡")
+                st.rerun()
+
+
+# --- Logged-In User Dashboard ---
+def render_authenticated_dashboard():
+    """Renders the sleek, compact dashboard when authenticated."""
+    user_email = st.session_state.user.get("email", "Explorer") if isinstance(st.session_state.user, dict) else "Explorer"
+    username = user_email.split("@")[0].capitalize()
+
+    st.markdown(
+        f"""
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; flex-wrap: wrap;">
+            <div>
+                <h1 style="margin: 0; font-size: 1.6rem; font-weight: 800;">Welcome, {username}</h1>
+                <p style="margin: 0; color: #94a3b8; font-size: 0.85rem;">Corrective RAG Document Analysis Workspace</p>
+            </div>
+            <div class="crag-hero-badge" style="margin: 0;">
+                <span class="crag-pulse-dot"></span>
+                ACTIVE SESSION
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+
+    # Metric KPI Row
+    kpi1, kpi2, kpi3 = st.columns(3)
+    with kpi1:
+        st.markdown(
+            f"""
+            <div class="crag-kpi-box">
+                <div>
+                    <div class="crag-kpi-label">Active Document</div>
+                    <div class="crag-kpi-value" style="font-size: 1.05rem; margin-top: 0.2rem;">
+                        {"📄 " + st.session_state.rag_components.get("doc_name", "None")[:18] + "..." if st.session_state.rag_components else "None Loaded"}
+                    </div>
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
+    with kpi2:
+        chunk_count = len(st.session_state.rag_components.get("chunks", [])) if st.session_state.rag_components else 0
+        st.markdown(
+            f"""
+            <div class="crag-kpi-box">
+                <div>
+                    <div class="crag-kpi-label">Indexed Chunks</div>
+                    <div class="crag-kpi-value" style="color: #a5b4fc;">{chunk_count}</div>
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
+    with kpi3:
+        queries_count = len(st.session_state.history)
+        st.markdown(
+            f"""
+            <div class="crag-kpi-box">
+                <div>
+                    <div class="crag-kpi-label">Session Queries</div>
+                    <div class="crag-kpi-value" style="color: #38bdf8;">{queries_count}</div>
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
+
+    st.markdown("<div style='height: 0.75rem;'></div>", unsafe_allow_html=True)
+
+    # Quick Navigation Cards
+    nav1, nav2 = st.columns(2)
+
+    with nav1:
+        with st.container(border=True):
+            st.markdown(
+                """
+                <div class="crag-card-icon">💬</div>
+                <div class="crag-card-title">Chat with Document</div>
+                <div class="crag-card-desc">
+                    Upload any PDF, chunk with page preservation, and ask questions with streaming answers and confidence scores.
+                </div>
+                """,
+                unsafe_allow_html=True
+            )
+            st.page_link("pages/crag_app.py", label="Open CRAG Chat →", icon="🤖", use_container_width=True)
+
+    with nav2:
+        with st.container(border=True):
+            st.markdown(
+                """
+                <div class="crag-card-icon">📊</div>
+                <div class="crag-card-title">Analytics & History</div>
+                <div class="crag-card-desc">
+                    Review past queries and answers, track retrieval accuracy, and export your session as CSV or Markdown.
+                </div>
+                """,
+                unsafe_allow_html=True
+            )
+            st.page_link("pages/history.py", label="View History & Reports →", icon="📈", use_container_width=True)
+
+    # Core Features Section
+    st.markdown("<div style='height: 0.75rem;'></div>", unsafe_allow_html=True)
+    f1, f2, f3 = st.columns(3)
+    with f1:
+        st.markdown(
+            """
+            <div class="crag-card">
+                <div style="font-size: 1.25rem; margin-bottom: 0.25rem;">🎯</div>
+                <div class="crag-card-title">Corrective Gate</div>
+                <div class="crag-card-desc">
+                    Evaluates mathematical cosine similarity across FAISS embeddings to flag low-confidence retrievals and prevent hallucinations.
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
+    with f2:
+        st.markdown(
+            """
+            <div class="crag-card">
+                <div style="font-size: 1.25rem; margin-bottom: 0.25rem;">📑</div>
+                <div class="crag-card-title">Page Attribution</div>
+                <div class="crag-card-desc">
+                    Every retrieved paragraph retains its exact source page metadata so you can inspect the exact excerpt used.
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
+    with f3:
+        st.markdown(
+            """
+            <div class="crag-card">
+                <div style="font-size: 1.25rem; margin-bottom: 0.25rem;">⚡</div>
+                <div class="crag-card-title">Groq Inference</div>
+                <div class="crag-card-desc">
+                    Low-latency streaming token generation powered by Groq LPU infrastructure.
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
+
+
+# --- Main Controller ---
+if not st.session_state.authenticated:
+    render_auth_portal()
+else:
+    render_authenticated_dashboard()

@@ -40,8 +40,8 @@ include = '\.pyi?$'
 include = [
     "main.py",
     "rag_backend.py",
+    "ui_styles.py",
     "pages/*.py",
-    "pages/*.html",
 ]
 
 [tool.pytest.ini_options]

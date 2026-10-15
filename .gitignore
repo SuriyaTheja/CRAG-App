@@ -1,2 +1,37 @@
+# Environment and Secret configurations
 .env
+.env.local
+*.pem
+*.key
 certificate.pem
+
+# Python bytecode and cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Virtual environments
+.venv/
+env/
+venv/
+ENV/
+
+# Distribution and packaging
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# IDE and Editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
