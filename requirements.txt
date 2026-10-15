@@ -1,0 +1,9 @@
+groq
+gradio
+sentence_transformers
+pdfplumber
+faiss-cpu
+python-dotenv
+pyrebase4
+streamlit
+pandas

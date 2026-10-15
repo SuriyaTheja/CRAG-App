@@ -1,0 +1,53 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "crag"
+version = "0.1.0"
+authors = [
+  { name = "CRAG" },
+]
+description = "Contextual Retrieval-Augmented Generation (CRAG) - A document analysis tool"
+readme = "README.md"
+requires-python = ">=3.8"
+dependencies = [
+    "streamlit>=1.28.0",
+    "pyrebase4>=4.7.1",
+    "python-dotenv>=1.0.0",
+    "groq",
+    "gradio",
+    "sentence_transformers",
+    "pdfplumber",
+    "faiss-cpu",
+    "pandas",
+    "setuptools>=65.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "black",
+    "flake8",
+]
+
+[tool.black]
+line-length = 88
+target-version = ['py38']
+include = '\.pyi?$'
+
+[tool.hatch.build.targets.wheel]
+include = [
+    "main.py",
+    "rag_backend.py",
+    "pages/*.py",
+    "pages/*.html",
+]
+
+[tool.pytest.ini_options]
+pythonpath = [
+  "."
+]
+testpaths = [
+    "tests",
+]
